@@ -79,7 +79,7 @@ export function useRaceWebSocket() {
         setSocketRef.current(ws);
         setConnectionStatusRef.current("connected");
         const activeCircuitId = useRaceStore.getState().currentCircuitId;
-        if (activeCircuitId && activeCircuitId !== DEFAULT_CIRCUIT_ID) {
+        if (activeCircuitId) {
           try {
             ws.send(JSON.stringify({ action: "select_circuit", circuit_id: activeCircuitId }));
           } catch (_) {}

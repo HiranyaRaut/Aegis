@@ -371,6 +371,16 @@ def save_audit_block(db: Session, block: dict):
 
 @app.on_event("startup")
 async def startup_event():
+    # Initialize active session in database so simulation loop can step immediately
+    from app.database.connection import SessionLocal
+    db = SessionLocal()
+    try:
+        initialize_session(db)
+    except Exception as e:
+        logger.error(f"Error initializing session on startup: {e}")
+    finally:
+        db.close()
+
     # Initialize background task
     sim_state.simulation_task = asyncio.create_task(simulation_loop())
 
@@ -663,6 +673,15 @@ async def websocket_telemetry(websocket: WebSocket):
                     "message": f"Circuit selected: {sim_state.circuit['gp_name']}"
                 })
             elif action == "toggle_simulation":
+                if not sim_state.active_session_id:
+                    from app.database.connection import SessionLocal
+                    db = SessionLocal()
+                    try:
+                        initialize_session(db, circuit_id=sim_state.circuit_id)
+                    except Exception as e:
+                        logger.error(f"Error auto-initializing session on toggle: {e}")
+                    finally:
+                        db.close()
                 sim_state.is_running = not sim_state.is_running
                 logger.info(f"Simulation active state toggled to: {sim_state.is_running}")
                 await manager.broadcast({

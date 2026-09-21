@@ -503,8 +503,26 @@ export const useRaceStore = create<RaceStore>((set, get) => ({
       });
     } else if (action === "force_weather" && data.value !== undefined) {
       set({ targetRain: data.value, isWeatherAuto: false });
-    } else if (action === "auto_weather") {
-      set({ isWeatherAuto: true });
+    } else if (backendAction === "toggle_simulation") {
+      const socket = get().socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        set((state) => ({ isRunning: !state.isRunning }));
+      }
+    } else if (backendAction === "reset_simulation") {
+      const socket = get().socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        set({
+          telemetry: baselineTelemetry,
+          sessionFlag: "GREEN",
+          activeEvents: baselineEvents,
+          mctsStrategy: baselineStrategy,
+          isRunning: false,
+          driverAnalytics: [],
+          isRaceCompleted: false,
+          raceSummary: null,
+          driverMistake: null
+        });
+      }
     }
 
     const socket = get().socket;
@@ -515,11 +533,29 @@ export const useRaceStore = create<RaceStore>((set, get) => ({
 
   tickLocalTelemetry: () => {
     if (get().hasRealSocketData) return;
+    const isRunning = get().isRunning;
 
     set((state) => {
       const t = state.telemetry;
-      const targetSpeed = t.speed + (Math.random() > 0.5 ? 1 : -1) * (1.0 + Math.random() * 2);
-      const cappedSpeed = Math.max(260.0, Math.min(315.0, targetSpeed));
+
+      if (!isRunning) {
+        return {
+          telemetry: {
+            ...t,
+            speed: 0,
+            rpm: 0,
+            gear: 0,
+            throttle: 0,
+            brake: 1.0,
+            steering_angle: 0,
+            gforce_x: 0,
+            gforce_y: 0
+          }
+        };
+      }
+
+      const targetSpeed = t.speed < 60 ? 270.0 : t.speed + (Math.random() > 0.5 ? 1 : -1) * (1.0 + Math.random() * 2);
+      const cappedSpeed = Math.max(240.0, Math.min(320.0, targetSpeed));
       
       const targetRpm = Math.round(11200 + (cappedSpeed / 300) * 2800 + (Math.random() > 0.5 ? 30 : -30));
       const cappedRpm = Math.max(9000, Math.min(14500, targetRpm));
@@ -527,15 +563,19 @@ export const useRaceStore = create<RaceStore>((set, get) => ({
       const steer = Math.round((Math.sin(Date.now() / 400) * 15.0 + (Math.random() > 0.5 ? 0.5 : -0.5)) * 10) / 10;
 
       const gX = Math.round((steer / 15.0) * 2.8 * 100) / 100;
-      const gY = Math.round((t.throttle - t.brake) * 2.5 * 100) / 100;
+      const gY = Math.round((0.95 - 0.0) * 2.5 * 100) / 100;
 
       const tFL = Math.round((t.tire_temp_fl + Math.abs(gX) * 0.15 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10;
 
       return {
         telemetry: {
           ...t,
+          elapsed_time: (t.elapsed_time || 0) + 0.15,
           speed: Math.round(cappedSpeed * 10) / 10,
           rpm: cappedRpm,
+          gear: Math.min(8, Math.max(4, Math.round(cappedSpeed / 40))),
+          throttle: 0.95,
+          brake: 0.0,
           steering_angle: steer,
           gforce_x: gX,
           gforce_y: gY,
