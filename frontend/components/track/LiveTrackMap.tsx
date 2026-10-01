@@ -178,6 +178,7 @@ export function LiveTrackMap() {
   const progressRef = useRef<number>(0.02);
   const animFrameRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(performance.now());
+  const lastSyncStoreRef = useRef<number>(0);
   const speedRef = useRef<number>(telemetry.speed);
   const sectorRef = useRef<number>(telemetry.sector);
   const isRunningRef = useRef<boolean>(isRunning);
@@ -196,7 +197,7 @@ export function LiveTrackMap() {
     progressRef.current = 0.02;
   }, [currentCircuitId]);
 
-  // FastF1 Telemetry Animation Loop: interpolates along telemetry_samples
+  // FastF1 Telemetry Animation Loop: interpolates along authentic FastF1 empirical samples at 60 FPS
   useEffect(() => {
     let isMounted = true;
     lastTimeRef.current = performance.now();
@@ -214,7 +215,7 @@ export function LiveTrackMap() {
         if (samples && samples.length > 2) {
           const n = samples.length;
 
-          // Driver 1 (VER #1) interpolation
+          // Driver 1 (VER #1) interpolation along authentic FastF1 track coordinates
           const p1 = progressRef.current;
           const sampleFloat1 = p1 * (n - 1);
           const i0 = Math.floor(sampleFloat1);
@@ -227,12 +228,28 @@ export function LiveTrackMap() {
           const curX1 = s0.x + (s1.x - s0.x) * ratio1;
           const curY1 = s0.y + (s1.y - s0.y) * ratio1;
 
-          const sampleSpeed1 = Math.round(s0.speed + (s1.speed - s0.speed) * ratio1);
-          const curSpeed1 = isMoving ? (speedRef.current > 30 ? Math.round(speedRef.current) : sampleSpeed1) : 0;
-          const curGear1 = isMoving ? (telemetry.gear ? telemetry.gear : s0.gear) : 0;
-          const curBrake1 = isMoving ? (telemetry.brake > 0.2 ? true : (s0.brake || s1.brake || false)) : true;
-          const curThrottle1 = isMoving ? Math.round(telemetry.throttle * 100) : 0;
+          // Empirical FastF1 speed, throttle, gear, and braking curve
+          const rawSpeed1 = s0.speed + (s1.speed - s0.speed) * ratio1;
+          const t0 = s0.throttle ?? 95;
+          const t1 = s1.throttle ?? 95;
+          const rawThrottle1 = t0 + (t1 - t0) * ratio1;
+          const rawGear1 = ratio1 > 0.5 ? s1.gear : s0.gear;
+          const rawBrake1 = Boolean(s0.brake || s1.brake || (s0.speed - s1.speed > 8 && rawThrottle1 < 30));
+
+          // Factor in dynamic weather grip and engine mode
+          const currentStore = useRaceStore.getState();
+          const rain = currentStore.targetRain || 0;
+          const isWet = currentStore.telemetry.tire_compound === "WET";
+          const gripPenalty = isWet ? (rain < 0.25 ? 0.08 : 0) : (rain * 0.45);
+          const gripFactor = Math.max(0.50, 1.0 - gripPenalty);
+          const modeMultiplier = currentStore.telemetry.engine_mode === "PUSH" ? 1.03 : 0.98;
+
+          const curSpeed1 = isMoving ? Math.round(rawSpeed1 * gripFactor * modeMultiplier * 10) / 10 : 0;
+          const curGear1 = isMoving ? (rawGear1 || Math.min(8, Math.max(1, Math.round(curSpeed1 / 42)))) : 0;
+          const curBrake1 = isMoving ? rawBrake1 : true;
+          const curThrottle1 = isMoving ? Math.round(rawThrottle1 * gripFactor) : 0;
           const curDist1 = Math.round(s0.distance + (s1.distance - s0.distance) * ratio1);
+          const curRpm1 = isMoving ? Math.round(8800 + (curSpeed1 / (Math.max(1, curGear1) * 44)) * 5200) : 0;
 
           const dx1 = s1.x - s0.x;
           const dy1 = s1.y - s0.y;
@@ -264,10 +281,10 @@ export function LiveTrackMap() {
           const curX2 = c0.x + (c1.x - c0.x) * ratio2;
           const curY2 = c0.y + (c1.y - c0.y) * ratio2;
 
-          const sampleSpeed2 = Math.round(c0.speed + (c1.speed - c0.speed) * ratio2);
-          const curSpeed2 = isMoving ? Math.max(0, sampleSpeed2 - 3) : 0;
-          const curGear2 = isMoving ? c0.gear : 0;
-          const curBrake2 = isMoving ? (c0.brake || c1.brake || false) : true;
+          const rawSpeed2 = c0.speed + (c1.speed - c0.speed) * ratio2;
+          const curSpeed2 = isMoving ? Math.round(Math.max(0, rawSpeed2 * gripFactor - 3) * 10) / 10 : 0;
+          const curGear2 = isMoving ? (c0.gear || Math.min(8, Math.max(1, Math.round(curSpeed2 / 42)))) : 0;
+          const curBrake2 = isMoving ? Boolean(c0.brake || c1.brake) : true;
           const curDist2 = Math.round(c0.distance + (c1.distance - c0.distance) * ratio2);
 
           const dx2 = c1.x - c0.x;
@@ -281,41 +298,59 @@ export function LiveTrackMap() {
             speed: curSpeed2,
             gear: curGear2,
             brake: curBrake2,
-            throttle: isMoving ? 96 : 0,
+            throttle: isMoving ? (curBrake2 ? 0 : 96) : 0,
             distance: curDist2,
           });
 
-          // ONLY advance position when simulation is running!
+          // Advance car position proportionally to actual physical speed:
+          // Speed (km/h) -> m/s = curSpeed / 3.6
+          // Progress per second = (curSpeed_ms / trackLengthMeters) * dt * pacingScale
           if (isMoving) {
-            const lapDuration = Math.max(14, (effectiveLengthKm / (Math.max(60, curSpeed1) / 3600)) * 0.28);
-            const baseRate = 1 / lapDuration;
-            let nextProgress = progressRef.current + baseRate * dt;
+            const trackMeters = (effectiveLengthKm || 5.793) * 1000;
+            const progressDelta = ((Math.max(45, curSpeed1) / 3.6) / trackMeters) * dt * 1.85;
+            let nextProgress = progressRef.current + progressDelta;
             if (nextProgress >= 1.0) nextProgress -= 1.0;
             progressRef.current = nextProgress;
+          }
+
+          // Continuously sync high-precision FastF1 speed, RPM, gear, throttle, and brake to the dashboard
+          if (isMoving && (currentTime - lastSyncStoreRef.current > 35)) {
+            lastSyncStoreRef.current = currentTime;
+            currentStore.syncTrackTelemetry({
+              speed: curSpeed1,
+              gear: curGear1,
+              rpm: curRpm1,
+              throttle: Math.round((curThrottle1 / 100) * 100) / 100,
+              brake: curBrake1 ? 1.0 : 0.0,
+              distance: curDist1,
+              steering_angle: Math.round((angleDeg1 % 35) * 10) / 10
+            });
           }
         } else {
           const path = trackPathRef.current || (document.getElementById("live-track-map-path") as SVGPathElement | null);
           if (path) {
             const pathLength = path.getTotalLength();
             if (pathLength > 0) {
-              const spd = speedRef.current > 40 ? speedRef.current : 240;
-              
-              // Car 1
               const currentDist = progressRef.current * pathLength;
               const pt = path.getPointAtLength(currentDist);
               const aheadDist = (currentDist + 2.0) % pathLength;
               const ptAhead = path.getPointAtLength(aheadDist);
               const angleDeg = (Math.atan2(ptAhead.y - pt.y, ptAhead.x - pt.x) * 180) / Math.PI;
 
+              // Corner speed dynamic curve when samples are absent
+              const cornerSharpness = Math.abs(angleDeg % 60);
+              const fallbackSpeed = isMoving ? Math.round(315 - cornerSharpness * 2.2) : 0;
+              const fallbackGear = isMoving ? Math.min(8, Math.max(2, Math.round(fallbackSpeed / 42))) : 0;
+
               setCarTelemetry({
                 x: pt.x,
                 y: pt.y,
                 angle: angleDeg,
-                speed: isMoving ? Math.round(spd) : 0,
-                gear: isMoving ? Math.min(8, Math.max(1, Math.round(spd / 42))) : 0,
-                brake: isMoving ? false : true,
-                throttle: isMoving ? 100 : 0,
-                distance: Math.round((currentDist / pathLength) * effectiveLengthKm * 1000),
+                speed: fallbackSpeed,
+                gear: fallbackGear,
+                brake: isMoving ? (cornerSharpness > 25) : true,
+                throttle: isMoving ? (cornerSharpness > 25 ? 20 : 100) : 0,
+                distance: Math.round((currentDist / pathLength) * (effectiveLengthKm || 5.7) * 1000),
               });
 
               // Car 2
@@ -330,17 +365,17 @@ export function LiveTrackMap() {
                 x: pt2.x,
                 y: pt2.y,
                 angle: angleDeg2,
-                speed: isMoving ? Math.max(0, Math.round(spd - 4)) : 0,
-                gear: isMoving ? Math.min(8, Math.max(1, Math.round(spd / 44))) : 0,
-                brake: isMoving ? false : true,
+                speed: isMoving ? Math.max(0, fallbackSpeed - 4) : 0,
+                gear: fallbackGear,
+                brake: isMoving ? (cornerSharpness > 25) : true,
                 throttle: isMoving ? 95 : 0,
-                distance: Math.round((dist2 / pathLength) * effectiveLengthKm * 1000),
+                distance: Math.round((dist2 / pathLength) * (effectiveLengthKm || 5.7) * 1000),
               });
 
               if (isMoving) {
-                const lapDuration = Math.max(16, (effectiveLengthKm / (spd / 3600)) * 0.28);
-                const baseRate = 1 / lapDuration;
-                let nextProgress = progressRef.current + baseRate * dt;
+                const trackMeters = (effectiveLengthKm || 5.793) * 1000;
+                const progressDelta = ((Math.max(45, fallbackSpeed) / 3.6) / trackMeters) * dt * 1.85;
+                let nextProgress = progressRef.current + progressDelta;
                 if (nextProgress >= 1.0) nextProgress -= 1.0;
                 progressRef.current = nextProgress;
               }

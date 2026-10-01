@@ -14,7 +14,9 @@ import {
   CheckCircle2, 
   Activity,
   Compass,
-  Layers
+  Layers,
+  X,
+  Eye
 } from "lucide-react";
 
 type RegionFilter = "ALL" | "EUROPE" | "AMERICAS" | "ASIA_PACIFIC" | "MIDDLE_EAST";
@@ -276,21 +278,28 @@ export function CircuitExplorer() {
               </div>
 
               {/* Action Button */}
-              <div>
+              <div className="flex items-center space-x-2 pt-2 border-t border-neutral-800/60">
+                <button
+                  onClick={() => setSelectedCircuitModal(circuit)}
+                  className="flex-1 flex items-center justify-center space-x-1.5 py-2 rounded-xl bg-[#131318] hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white text-xs font-bold transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>INSPECT</span>
+                </button>
                 {isActive ? (
                   <button
                     onClick={() => router.push("/")}
-                    className="w-full flex items-center justify-center space-x-2 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-colors"
+                    className="flex-1 flex items-center justify-center space-x-1.5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-colors"
                   >
-                    <span>GO TO COCKPIT</span>
+                    <span>COCKPIT</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 ) : (
                   <button
                     onClick={() => handleDeployCircuit(circuit.id)}
-                    className="w-full flex items-center justify-center space-x-2 py-2 rounded-xl bg-[#15151b] hover:bg-neutral-800 border border-neutral-800 text-neutral-300 hover:text-white text-xs font-bold transition-colors"
+                    className="flex-1 flex items-center justify-center space-x-1.5 py-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-400 hover:text-red-300 text-xs font-bold transition-colors"
                   >
-                    <span>DEPLOY TO COCKPIT</span>
+                    <span>DEPLOY</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -300,6 +309,150 @@ export function CircuitExplorer() {
         })}
       </div>
 
+      {/* Circuit Detail Inspection Modal */}
+      {selectedCircuitModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={() => setSelectedCircuitModal(null)}
+        >
+          <div 
+            className="bg-[#0e0e13] border border-neutral-700/80 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-4 border-b border-neutral-800">
+              <div className="flex items-center space-x-3">
+                <span className="text-3xl">{selectedCircuitModal.flag}</span>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h2 className="text-xl font-black text-white uppercase tracking-tight">
+                      {selectedCircuitModal.gpName}
+                    </h2>
+                    <span className="text-xs font-mono text-neutral-400 bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800">
+                      {selectedCircuitModal.flagCode}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 font-sans mt-0.5">
+                    {selectedCircuitModal.name} · {selectedCircuitModal.country}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedCircuitModal(null)}
+                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Track SVG Enlarged Silhouette */}
+            <div className="my-4 h-48 w-full bg-[#131319] rounded-xl p-4 flex items-center justify-center relative border border-neutral-800">
+              <svg 
+                className="w-full h-full max-h-44 text-neutral-400" 
+                viewBox={selectedCircuitModal.viewBox} 
+                fill="none"
+              >
+                <path
+                  d={selectedCircuitModal.svgPath}
+                  stroke={selectedCircuitModal.id === currentCircuitId ? "#ff1e1e" : "#e4e4e7"}
+                  strokeWidth="5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                {/* Sector splits */}
+                <circle cx={selectedCircuitModal.sectorSplitPoints.s1.x} cy={selectedCircuitModal.sectorSplitPoints.s1.y} r="5" fill="#22c55e" />
+                <circle cx={selectedCircuitModal.sectorSplitPoints.s2.x} cy={selectedCircuitModal.sectorSplitPoints.s2.y} r="5" fill="#eab308" />
+                <circle cx={selectedCircuitModal.sectorSplitPoints.s3.x} cy={selectedCircuitModal.sectorSplitPoints.s3.y} r="5" fill="#ef4444" />
+                {/* Corner markers */}
+                {selectedCircuitModal.cornerMarkers.map((cm, idx) => (
+                  <g key={idx}>
+                    <circle cx={cm.x} cy={cm.y} r="3" fill="#60a5fa" />
+                    <text x={cm.x + 5} y={cm.y + 3} fontSize="8" fill="#93c5fd" fontFamily="monospace">
+                      {cm.name}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+              <div className="absolute top-2.5 right-3 flex items-center space-x-2 text-[10px] font-mono text-neutral-400">
+                <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span><span>S1</span></span>
+                <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span><span>S2</span></span>
+                <span className="flex items-center space-x-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span><span>S3</span></span>
+              </div>
+            </div>
+
+            {/* Spec Stats Grid */}
+            <div className="grid grid-cols-4 gap-3 py-3 border-t border-b border-neutral-800 text-center text-xs mb-4">
+              <div className="bg-[#121217] p-2 rounded-lg border border-neutral-800/80">
+                <span className="text-[10px] text-neutral-400 block uppercase">Length</span>
+                <span className="font-bold text-white">{selectedCircuitModal.lengthKm} KM</span>
+              </div>
+              <div className="bg-[#121217] p-2 rounded-lg border border-neutral-800/80">
+                <span className="text-[10px] text-neutral-400 block uppercase">Laps</span>
+                <span className="font-bold text-white">{selectedCircuitModal.totalLaps}</span>
+              </div>
+              <div className="bg-[#121217] p-2 rounded-lg border border-neutral-800/80">
+                <span className="text-[10px] text-neutral-400 block uppercase">Pit Loss</span>
+                <span className="font-bold text-white">{selectedCircuitModal.pitLaneDelta}s</span>
+              </div>
+              <div className="bg-[#121217] p-2 rounded-lg border border-neutral-800/80">
+                <span className="text-[10px] text-neutral-400 block uppercase">Base Pace</span>
+                <span className="font-bold text-emerald-400">
+                  {(selectedCircuitModal.sectorBest[0] + selectedCircuitModal.sectorBest[1] + selectedCircuitModal.sectorBest[2]).toFixed(1)}s
+                </span>
+              </div>
+            </div>
+
+            {/* Sector Times */}
+            <div className="flex items-center justify-between text-xs font-mono bg-[#111116] border border-neutral-800 px-3 py-2 rounded-xl mb-4">
+              <span className="text-neutral-400 text-[11px]">Sector Bests:</span>
+              <div className="flex space-x-4">
+                <span>S1: <strong className="text-emerald-400">{selectedCircuitModal.sectorBest[0].toFixed(3)}s</strong></span>
+                <span>S2: <strong className="text-emerald-400">{selectedCircuitModal.sectorBest[1].toFixed(3)}s</strong></span>
+                <span>S3: <strong className="text-emerald-400">{selectedCircuitModal.sectorBest[2].toFixed(3)}s</strong></span>
+              </div>
+            </div>
+
+            {/* Key Corners */}
+            {selectedCircuitModal.keyCorners?.length > 0 && (
+              <div className="mb-4">
+                <span className="text-[11px] text-neutral-400 font-bold uppercase block mb-1.5">Key Corners:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedCircuitModal.keyCorners.map((corner, i) => (
+                    <span key={i} className="px-2 py-0.5 rounded-md bg-neutral-800/80 border border-neutral-700/60 text-[11px] text-neutral-300 font-mono">
+                      {corner}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Characteristics */}
+            <p className="text-xs text-neutral-300 font-sans leading-relaxed mb-6">
+              {selectedCircuitModal.characteristics}
+            </p>
+
+            {/* Actions */}
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setSelectedCircuitModal(null)}
+                className="flex-1 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white text-xs font-bold transition-colors"
+              >
+                CLOSE
+              </button>
+              <button
+                onClick={() => {
+                  handleDeployCircuit(selectedCircuitModal.id);
+                  setSelectedCircuitModal(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center justify-center space-x-2 transition-colors shadow-lg shadow-red-600/30"
+              >
+                <span>DEPLOY TO LIVE COCKPIT</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

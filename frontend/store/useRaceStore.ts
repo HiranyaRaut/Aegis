@@ -150,6 +150,10 @@ interface RaceStore {
   // Controls sending to WebSocket
   sendAction: (action: string, data?: any) => void;
   
+  // Real-time high-precision track telemetry sync from FastF1 empirical samples
+  syncTrackTelemetry: (data: { speed: number; gear: number; rpm: number; throttle: number; brake: number; distance?: number; steering_angle?: number }) => void;
+  lastTrackSyncTime: number;
+
   // Local pacing loop (keeps UI alive before/between socket ticks)
   tickLocalTelemetry: () => void;
 }
@@ -531,6 +535,24 @@ export const useRaceStore = create<RaceStore>((set, get) => ({
     }
   },
 
+  lastTrackSyncTime: 0,
+
+  syncTrackTelemetry: (data) => {
+    set((state) => ({
+      lastTrackSyncTime: Date.now(),
+      telemetry: {
+        ...state.telemetry,
+        speed: data.speed,
+        gear: data.gear,
+        rpm: data.rpm,
+        throttle: data.throttle,
+        brake: data.brake,
+        ...(data.distance !== undefined ? { distance: data.distance } : {}),
+        ...(data.steering_angle !== undefined ? { steering_angle: data.steering_angle } : {})
+      }
+    }));
+  },
+
   tickLocalTelemetry: () => {
     if (get().hasRealSocketData) return;
     const isRunning = get().isRunning;
@@ -554,37 +576,72 @@ export const useRaceStore = create<RaceStore>((set, get) => ({
         };
       }
 
-      const targetSpeed = t.speed < 60 ? 270.0 : t.speed + (Math.random() > 0.5 ? 1 : -1) * (1.0 + Math.random() * 2);
-      const cappedSpeed = Math.max(240.0, Math.min(320.0, targetSpeed));
+      const rain = state.targetRain || 0;
+      const isWetCompound = t.tire_compound === "WET";
+
+      // Calculate dynamic grip penalty based on wetness and tire compound
+      let rainGripPenalty = 0;
+      if (isWetCompound) {
+        // Wet tires excel in heavy rain; slightly slower on bone-dry track
+        rainGripPenalty = rain < 0.25 ? (0.25 - rain) * 0.2 : 0;
+      } else {
+        // Slicks suffer progressive grip & speed loss as track wetness increases
+        rainGripPenalty = rain * 0.48;
+      }
+
+      const gripFactor = Math.max(0.48, 1.0 - rainGripPenalty);
+      const idealSpeed = (t.engine_mode === "PUSH" ? 315.0 : 290.0) * gripFactor;
       
-      const targetRpm = Math.round(11200 + (cappedSpeed / 300) * 2800 + (Math.random() > 0.5 ? 30 : -30));
-      const cappedRpm = Math.max(9000, Math.min(14500, targetRpm));
+      const targetSpeed = t.speed < 50 
+        ? idealSpeed 
+        : t.speed * 0.82 + idealSpeed * 0.18 + (Math.random() > 0.5 ? 1 : -1) * (1.0 + Math.random() * 2);
+      
+      const minSpeed = Math.round(130.0 * gripFactor);
+      const maxSpeed = Math.round(325.0 * gripFactor);
+      const cappedSpeed = Math.max(minSpeed, Math.min(maxSpeed, targetSpeed));
+      
+      const targetRpm = Math.round(9500 + (cappedSpeed / 300) * 3500 + (Math.random() > 0.5 ? 30 : -30));
+      const cappedRpm = Math.max(8000, Math.min(14500, targetRpm));
 
       const steer = Math.round((Math.sin(Date.now() / 400) * 15.0 + (Math.random() > 0.5 ? 0.5 : -0.5)) * 10) / 10;
 
-      const gX = Math.round((steer / 15.0) * 2.8 * 100) / 100;
-      const gY = Math.round((0.95 - 0.0) * 2.5 * 100) / 100;
+      const gX = Math.round((steer / 15.0) * 2.8 * gripFactor * 100) / 100;
+      const gY = Math.round((0.95 - 0.0) * 2.5 * gripFactor * 100) / 100;
 
-      const tFL = Math.round((t.tire_temp_fl + Math.abs(gX) * 0.15 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10;
+      // Tire temperature cools down on wet track surfaces
+      const tempDrop = rain * 18.0;
+      const tFL = Math.round((92.4 - tempDrop + Math.abs(gX) * 0.15 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10;
+
+      // If high-frequency empirical track telemetry is actively streaming, keep its speed and gear!
+      const isSyncedFromTrack = Date.now() - (state.lastTrackSyncTime || 0) < 600;
 
       return {
         telemetry: {
           ...t,
           elapsed_time: (t.elapsed_time || 0) + 0.15,
-          speed: Math.round(cappedSpeed * 10) / 10,
-          rpm: cappedRpm,
-          gear: Math.min(8, Math.max(4, Math.round(cappedSpeed / 40))),
-          throttle: 0.95,
-          brake: 0.0,
+          speed: isSyncedFromTrack ? t.speed : Math.round(cappedSpeed * 10) / 10,
+          rpm: isSyncedFromTrack ? t.rpm : cappedRpm,
+          gear: isSyncedFromTrack ? t.gear : Math.min(8, Math.max(3, Math.round(cappedSpeed / 38))),
+          throttle: isSyncedFromTrack ? t.throttle : Math.round(Math.max(0.45, 0.95 * gripFactor) * 100) / 100,
+          brake: isSyncedFromTrack ? t.brake : 0.0,
           steering_angle: steer,
           gforce_x: gX,
           gforce_y: gY,
           tire_temp_fl: tFL,
-          tire_temp_fr: Math.round((t.tire_temp_fr + Math.abs(gX) * 0.12 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
-          tire_temp_rl: Math.round((t.tire_temp_rl + Math.abs(gY) * 0.15 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
-          tire_temp_rr: Math.round((t.tire_temp_rr + Math.abs(gY) * 0.13 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
+          tire_temp_fr: Math.round((91.8 - tempDrop + Math.abs(gX) * 0.12 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
+          tire_temp_rl: Math.round((95.2 - tempDrop + Math.abs(gY) * 0.15 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
+          tire_temp_rr: Math.round((94.6 - tempDrop + Math.abs(gY) * 0.13 + (Math.random() > 0.5 ? 0.05 : -0.05)) * 10) / 10,
           ers_charge: Math.max(5.0, Math.min(100.0, t.ers_charge + (Math.random() > 0.5 ? 0.05 : -0.08))),
-          reaction_delay: Math.round((0.15 + t.fatigue * 0.1 + t.stress * 0.08 + Math.random() * 0.005) * 1000) / 1000
+          reaction_delay: Math.round((0.15 + t.fatigue * 0.1 + (t.stress + rain * 0.25) * 0.08 + Math.random() * 0.005) * 1000) / 1000,
+          weather: {
+            rain_intensity: rain,
+            track_water_depth: Math.round(rain * 5.5 * 10) / 10,
+            grip_level: Math.round(gripFactor * 100) / 100,
+            status: rain === 0 ? "dry" : rain < 0.25 ? "damp" : rain < 0.65 ? "wet" : "heavy_rain",
+            ambient_temp: 22.0,
+            track_temp: Math.round((35.0 - rain * 15.0) * 10) / 10,
+            humidity: Math.round((40.0 + rain * 50.0) * 10) / 10
+          }
         }
       };
     });

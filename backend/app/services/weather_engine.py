@@ -60,15 +60,16 @@ class WeatherEngine:
             elif self.rain_intensity > target_rain:
                 self.rain_intensity = max(target_rain, round(self.rain_intensity - 0.05, 2))
 
-        # Track water depth evolution
-        if self.rain_intensity > 0.0:
-            # Water accumulates depending on rain intensity
-            accumulation = self.rain_intensity * 0.4  # accumulation rate mm/step
-            self.track_water_depth = min(6.0, self.track_water_depth + accumulation)
-        else:
-            # Track dries out
-            dry_rate = 0.1 + (self.track_temp / 100.0) * 0.15  # temperature dependent
-            self.track_water_depth = max(0.0, self.track_water_depth - dry_rate)
+        # Track water depth evolution: approaches equilibrium depth based on rain intensity
+        target_water_depth = round(self.rain_intensity * 5.5, 2)
+        if self.track_water_depth < target_water_depth:
+            # Water accumulates towards target depth
+            accumulation = max(0.04, self.rain_intensity * 0.3)
+            self.track_water_depth = min(target_water_depth, round(self.track_water_depth + accumulation, 2))
+        elif self.track_water_depth > target_water_depth:
+            # Track dries out towards target depth
+            dry_rate = round(0.12 + (self.track_temp / 100.0) * 0.15, 2)
+            self.track_water_depth = max(target_water_depth, round(self.track_water_depth - dry_rate, 2))
 
         # Classify weather status
         if self.track_water_depth < 0.1:
