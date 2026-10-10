@@ -27,6 +27,9 @@ backend/aegis.db
 # Build/cache files
 dist/
 build/
+backend/cache/
+*.ff1pkl
+fastf1_http_cache.sqlite
 
 # Data
 # Keep this commented unless the data/ folder should NOT be committed
